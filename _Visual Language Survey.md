@@ -36,7 +36,7 @@ Attention、跨模态表示学习
 
 $Q_l \in \mathbb{R}^{d\times N}\quad V_l \in \mathbb{R}^{d\times T}$，其中$N,T$分别表示单词数和像素点数，$d$表示channel数。由于其中存在拼接、相加的操作，所以必须使得两者具有同样的channel数。
 
-![image-20200205220237786](..\imgs\image-20200205220237786.png)
+![image-20200205220237786](imgs\image-20200205220237786.png)
 
 作者首先计算Affinity matrix
 $$
@@ -69,7 +69,7 @@ $$
 $$
 最终得到的两个表示维度不变。
 
-![image-20200205215818181](..\imgs\image-20200205215818181.png)
+![image-20200205215818181](imgs\image-20200205215818181.png)
 
 作者进而对原特征和attended特征进行融合，如上图所示
 $$
@@ -98,7 +98,7 @@ Visual grounding、Image Level监督
 * The Local Aggregator Module:为上一模块的每一条对齐结果，生成caption-conditioned的image representation。
 * The Global Matching Module:使用caption-conditioned的image representation判别与Caption的匹配程度。
 
-![image-20200205214846947](..\imgs\image-20200205214846947.png)
+![image-20200205214846947](imgs\image-20200205214846947.png)
 
 ##### The Local Matching Module
 
