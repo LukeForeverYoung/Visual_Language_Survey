@@ -20,7 +20,86 @@ Visual Language任务指的是同时利用到视觉和文本信息且关注于�
 
 ## 方法
 
+### Multi-level Multimodal Common Semantic Space for Image-Phrase Grounding
+
+2019 CVPR
+
+#### Keywords
+
+Layer Attention、跨模态
+
+#### 解析
+
+这篇文章提出了一个新视角，将文本对视觉的注意力应用在视觉特征抽取的过程中，而非仅对抽取结果进行Attention。
+
+##### Multi-Level Multimodal Attention Mechanism
+
+![image-20200206171423397](imgs\image-20200206171423397.png)
+
+对于视觉特征抽取，作者将预训练网络中的$L$层中间特征（包括最后一层）抽出并上采样到相同分辨率，再用$1\times 1$卷积得到同样大小的特征向量，组合后得到$V \in \mathbb{R}^{N\times L\times D}$，其中$N=M\times M$是中间特征统一后的分辨率。
+
+文本特征表示为$S\in \mathbb{R}^{T\times D}$，生成过程略过，每个词的表示都被正则成单位向量。
+
+作者首先计算两者的Heat map，并通过Heat map融合掉$V$中的channel$N$，以得到word对每一层的attened表示并转化为单位向量。
+$$
+\begin{aligned}
+H_{n,l,t}&=max\left(0,\left<s_t,v_{n,l}\right>\right)\\
+a_{t,l}&=\frac{\sum^N_{n=1}{H_{n,l,t}v_{n,l}}}{\left\|\sum^N_{n=1}{H_{n,l,t}v_{n,l}}\right\|_2}
+\end{aligned}
+$$
+不同于用softmax生成attention，作者这里直接对向量积应用了ReLU。作者的解释我贴一下原话
+
+> Indeed for irrelevant image-sentence pairs, the attention maps would be almost all zeros while the softmax process would always force attention to be a distribution over the image/words summing to 1. Furthermore, a group of words shaping a phrase could have the same attention area which is again hard to achieve considering the competition among regions/words in the case of applying softmax on the heatmap. 
+
+对于不相关的Image-Sentence，softmax总会生成一个和为1的分布，然而每个word对Visual feature的attention都趋近于0才对，所以作者改用ReLU（这个问题论文**Improved Fusion of Visual and Language Representations by Dense Symmetric Co-Attention for Visual Question Answering**有更加灵活的解决方法，不过作者没有比对）。另外作者认为应用softmax会让同一个短语中的若干词具有类似的attention area，更难处理词/区域之间的竞争（没读懂）。
+
+公式中的$a_{t,l}$表示了词$t$在图像特征中第$l$层的attended表示，作者还认为上述融合过程相当于从visual representation中用attention筛选出subset并构成了一个超平面，而$a_{t,l}$是其中一条向量。
+
+##### Feature Level Selection
+
+作者认为，word与图像的匹配性表现在与各layer的匹配性上，需要选择一个最匹配的feature level。
+$$
+\begin{aligned}
+R_{t,l}&=\left<a_{t,l},s_t\right>\\
+R_{t}&=\max_l{R_{t,l}}
+\end{aligned}
+$$
+因为两者都是单位向量所以$R_{t,l}$既表示了余弦相似度也表示了投影值。作者把寻找最匹配level的过程形容成寻找最大投影超平面的过程。
+
+> This procedure can be seen as finding projection of the textual embeddings on hyperplanes spanned by visual features from different levels and choosing the one that maximizes this projection. Intuitively, that chosen hyperplane can be a better representation for visual feature space attended by word t.
+
+个人认为这个说法是有问题的，$R_{t,l}=\left<a_{t,l},s_t\right>$计算的仅仅是两个向量间的投影，作者没有也无法证明$a_{t,l},s_l$组成的平面能和作者所称的超平面相切，所以不能用$R_{t,l}$代替$s_l$到超平面的投影。不过撇开超平面的概念，这一套流程确实能找到与word最匹配的layer，$a_{t,l}$表示了词$t$在图像特征中第$l$层的attended表示。
+
+最后作者分别用word-based/sentence-based相似度表示Image-Sentence的匹配分数：
+$$
+R_w\left(S,I\right)=\mathrm{log}{\left(sum^{T-1}_t{\mathrm{exp}\left(\gamma_1 R_t\right)}\right)^{\frac{1}{\gamma_1}}}
+$$
+$R_w\left(S,I\right)$是word-based相似度。
+$$
+\begin{aligned}
+H_{n, l}^{s}&=\max \left(0,\left\langle\overline{\mathbf{s}}, \mathbf{v}_{n, l}\right\rangle\right)\\
+\mathbf{a}_{l}^{s}&=\sum_{n=1}^{N} H_{n, l}^{s} \mathbf{v}_{n, l}\\
+R_{s, l}&=\left\langle\mathbf{a}_{l}^{s}, \overline{\mathbf{s}}\right\rangle\\
+R_{s}(S, I)&=\max _{l} R_{s, l}
+\end{aligned}
+$$
+$R_{s, l}\left(S,I\right)$表示的是sentence-based相似度，其相当于把word-based的过程用整个句子的表示替换，所以直接用$\max_l R_{s,l}$就可以了。
+
+##### Training
+
+作者提出了一个很有意思的训练方式，对于每一个batch的image-caption pairs，对于image相当于要在batch中找到最佳的caption，反之同理，这就变成了一个分类任务。
+$$
+\begin{aligned}
+P_x\left(S_b|I_b\right)&=\frac{\exp\left(\gamma_2 R_x\left(S_b,I_b\right)\right)}{\sum^B_{b'}\exp\left(\gamma_2 R_x\left(S_{b'},I_b\right)\right)}\\
+P_x\left(I_b|S_b\right)&=\frac{\exp\left(\gamma_2 R_x\left(S_b,I_b\right)\right)}{\sum^B_{b'}\exp\left(\gamma_2 R_x\left(S_b,I_{b'}\right)\right)}\\
+L^x&=-\sum^B_{b=1}\left(\log{P_x\left(S_b|I_b\right)}+\log{P_x\left(I_b|S_b\right)}\right)\\
+L&=L^w+L^s
+\end{aligned}
+$$
+
 ### Improved Fusion of Visual and Language Representations by Dense Symmetric Co-Attention for Visual Question Answering
+
+2018 CVPR
 
 #### Keywords
 
@@ -81,6 +160,8 @@ $$
 其中$W_{Q_l},W_{V_l} \in \mathbb{R}^{d\times 2d}$用于fuse拼接的两者。
 
 ### Align2Ground: Weakly Supervised Phrase Grounding Guided by Image-Caption Alignment 
+
+2019 ICCV
 
 #### Keywords
 
