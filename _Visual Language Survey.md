@@ -1,5 +1,7 @@
 # Visual Language Tasks Survey
 
+[TOC]
+
 ## 前言
 
 Visual Language任务指的是同时利用到视觉和文本信息且关注于建立起两者联系的任务，如VQA、Visual grounding等，本文侧重于记录此领域内的主要任务和一些值得关注的前沿方法。
