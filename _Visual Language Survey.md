@@ -154,6 +154,86 @@ P=\mathrm{softmax}\left(h_{t=L}\odot\tilde{P}\right)
 $$
 这一方法并不需要人为标注目标是什么，但需要给出候选区域（作者使用交叉熵而非IoU）标注，而且多轮对话实际运用中也没那么理想。
 
+### Bottom-Up and Top-Down Attention for Image Captioning and Visual Question Answering
+
+2018 CVPR
+
+#### Keywords
+
+VQA、Image Caption、Top-Down Attention
+
+#### 解析
+
+这篇文章透露出浓浓的竞赛风格，很多细节为什么要这么做的解释比较含糊，一些概念和叫法也略显强行（比如Bottom-Up Attention），不过这也正常，很多东西就是解释不了的，效果好学就行了。
+
+这篇文章提出了一个基于Attention的模型为Image Caption和VQA生成融合多模态的Attended feature，其包含两类Attention：
+
+* Bottom-Up Attention：相比于直接用CNN抽取特征，作者改用Faster-RCNN从图片中取出图像区域并抽取特征。这可以看作是一种Hard Attention，充分训练的网络可以直接筛选出可能有用的图像区域。因为是从像素生成Region，所以是Bottom-Up。
+* Top-Down Attention：作者考虑了Caption任务和VQA任务的Top-Down Attention，其思想便是用整体的文本表示指导个Regions的关注度，所以是Top-Down。
+
+##### Bottom-Up Attention
+
+Faster RCNN就不过多介绍了，作者在ImageNet预训练模型上进一步用Visual Genome上训练，这个数据集还保留了物体的attribute特征，所以作者额外引入了属性分类任务进行训练。
+
+##### Top-Down Attention
+
+作者考虑了Caption任务和VQA任务。
+
+Caption任务：
+
+作者使用了两组具有相同结构的LSTM进行编码$h_t=\mathrm{LSTM}\left(x_t,h_{t-1}\right)$。Top-Down Attention LSTM标记为$\mathrm{LSTM_1}$，Language LSTM标记为$\mathrm{LSTM_2}$。
+
+![image-20200209171950282](imgs\image-20200209171950282.png)
+
+Top-Down Attention LSTM的输入是将Language LSTM上一步的输出和regions的特征均值以及当前的输入词嵌入（这里作者没说这个输入词是什么，从其引用文献推测应该是上一步预测的词）进行拼接得到。
+$$
+x^1_t=\left[h^2_{t-1},\mathrm{mean}\left(v_1...v_k\right),W_e\Pi_t\right]
+$$
+其输出被用于生成关于Regions的attention map并得到关于整个图片的attended feature。
+$$
+\begin{aligned}
+a_{i,t}&=w^{\mathrm{T}}_a \mathrm{tanh}\left(W_{va}v_i+W_{ha}h^1_t\right)\\
+\alpha_t&=\mathrm{softmax}\left(a_{1:k,t}\right)\\
+\hat{v}_t&=\sum^K_{i=1}\alpha_{i,t}v_i
+\end{aligned}
+$$
+Language LSTM的输入来自于Top-Down Attention LSTM的当前隐状态和图片的attended feature。
+$$
+x^2_t=\left[\hat{v}_t,h^1_t\right]
+$$
+每一个时间步，其隐藏状态会用于生成一个单词
+$$
+\begin{aligned}
+p\left(y_t|y_{1:t-1}\right)&=\mathrm{softmax}\left(W_ph^2_t+b_p\right)\\
+p\left(y_{1:t}\right)&=\prod^T_{t=1}{p\left(y_t|y_{1:t-1}\right)}
+\end{aligned}
+$$
+作者使用了交叉熵和CIDEr损失进行训练，后者基于强化学习可以模拟梯度。
+
+VQA任务：
+
+![image-20200209202321716](imgs\image-20200209202321716.png)
+
+这里的Top-Down Attention和上文类似，只不过其输入单词换成问句，其最后一个隐藏层的输出作为问题的表示$q$，此外为了简化表述，作者使用了候选答案集固定的VQA模式，模型需要输出候选答案的概率分布。
+
+作者设计了一个非线性变化$y=f\left(x\right)$，以提高非线性拟合能力。
+$$
+\begin{aligned}
+\tilde{y}&=\mathrm{tanh}\left({Wx+b}\right)\\
+g&=\sigma\left(W'x+b'\right)\\
+y&=\tilde{y}\circ g
+\end{aligned}
+$$
+类似于Caption任务，作者生成question-attended的视觉信息，并与文本问题的表示融合，进而生成答案分布
+$$
+\begin{aligned}
+a_i&=w^{\mathrm{T}}_a f_a\left(\left[v_i,q\right]\right)\\
+\hat{v}&=\sum^K_{i=1}{a_iv_i}\\
+h&=f_q\left(q\right)\circ f_v\left(\hat{v}\right)\\
+p\left(y\right)&=\sigma\left(W_of_o\left(h\right)\right)
+\end{aligned}
+$$
+
 ### Visual Semantic Reasoning for Image-Text Matching
 
 2019 ICCV
