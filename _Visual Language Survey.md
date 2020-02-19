@@ -22,6 +22,137 @@ Visual Language任务指的是同时利用到视觉和文本信息且关注于�
 
 ## 方法
 
+### Visual Concept-Metaconcept Learning
+
+2019 NIPS
+
+#### Keywords
+
+Visual concept recognition
+
+在建立视觉和concept的联系中，现有方法往往时孤立地考虑每一个concept于其视觉特征，作者考虑让计算机理解哪一些concept描述的是同一类事物，并将其称为metaconcept。
+
+![image-20200219203726608](imgs\image-20200219203726608.png)
+
+在上图中，如果存在bias的数据，比如red的物体大多是cube，那么模型很可能将red这一概念和视觉特征cube联系到一起，但如果模型能理解red和green是描述物体的同一类属性，同时由于视觉表示上，色彩和形状特征差异较大，那么模型就可以纠正这一bias，对red的正确认知还可以泛化到未见过的组合中比如red cylinder。同时如果模型能学会判别相同类型的concept，那么也可能泛化到理解sphere和cube是描述形状的concept。
+
+基于如上需求，作者基于神经符号推理，拓展出了Meta Verify机制。
+
+![image-20200219204818915](imgs\image-20200219204818915.png)
+
+a b c.I部分都在论文**The Neuro-Symbolic Concept Learner: Interpreting Scenes, Words, and Sentences From Natural Supervision**中有所讲解，其将物体从视觉图像中检测出，同时将问题解析为可执行程序，在神经符号推理中执行并求解答案。作者的贡献主要是c.II中的Meta Verify。
+
+首先作者提出了Metaconcept questions，这是一种纯文本问题，问题会询问一对oncepts之间的metaconcept relation，比如red与green; cube与sphere都属于same kind这一metaconcept，将这些输入模型，需要给出其检验得到的置信度。
+
+为了处理concept之间的关系，作者提出了一个half-space定义规则$V\left(x\right)=\left\{y\in\mathbb{R}^N|\left(y-x\right)^{\mathrm{T}}x>0\right\}$。作者假设整个空间服从标准正态分布，那么概念$a$的概率表示为
+$$
+\begin{aligned}
+\mathrm{Pr}\left(a\right)&=\mathrm{Vol}_{\mathcal{N}\left(0,I\right)}\left(V_a\right)=\int_{z\in V_a}{\frac{1}{\sqrt{2\pi}}e^{-\frac{1}{2}\lVert z\rVert^2_2}dz}=\frac{1}{2}\left[1-\mathrm{erf\left(\frac{\lVert x\rVert_2}{\sqrt{2}}\right)}\right]\\
+\mathrm{Pr}\left(a,b\right)&=\mathrm{Vol}_{\mathcal{N}\left(0,I\right)}\left(V_a\cap V_b\right)\\
+\mathrm{Pr}\left(b|a\right)&=\frac{\mathrm{Pr}\left(a,b\right)}{\mathrm{Pr}\left(b\right)}=\frac{\mathrm{Vol}_{\mathcal{N}\left(0,I\right)}\left(V_a\cap V_b\right)}{\mathrm{Vol}_{\mathcal{N}\left(0,I\right)}\left(V_a\right)}
+\end{aligned}
+$$
+其中$\mathrm{erf}\left(\right)$表示**error function**。
+
+![image-20200219205843176](imgs\image-20200219205843176.png)
+
+以red为例，图中红色区域既是其定义的half-space，那么object is red可以表示为$\mathrm{Pr}\left(red|o\right)$。
+
+定义了概率表示后，对于任意一种metaconcept（如same kind或synonym），作者会给出一个专属的多层感知器$f_{synonym}$，作者进而基于概率表示计算了concept之间的关系线索
+
+
+$$
+\begin{aligned}
+g_1\left(a,b\right)&=\mathrm{logit}\left(\mathrm{Pr}\left(a|b\right)\right)\\
+g_2\left(a,b\right)&=\mathrm{ln}\frac{\mathrm{Pr}\left(a,b\right)}{\mathrm{Pr}\left(a\right)\mathrm{Pr}\left(b\right)}\\
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+&\mathrm{MetaVerify}\left(red,cube,synonym\right)=\\
+&\quad\quad f_{synonym}\left(g_1\left(red,cube\right),g_1\left(cube,red\right),g_2\left(red,cube\right)\right)
+\end{aligned}
+$$
+
+其输出核验的置信度。
+
+### Detecting Unseen Visual Relations Using Analogies 
+
+2019 ICCV
+
+#### Keywords
+
+Visual concept recognition
+
+本文基于迁移的思想，让模型能够识别未见过的视觉概念组合。即对于$t=\left(s,p,o\right)$这种基于subject,predicate和object的三元组，如果其中每个元素都得到了充分的学习但$t$未曾参与过训练，希望识别到$t$和视觉表示的对应。
+
+视觉概念学习的传统方法有两种思路
+
+* 为每个entity分别学习检测器，并用合并后的检测器结果作为对应，对于subject和object，检测器是容易学习的，但对于谓词predicate，其在视觉空间中存在较大的variability，很难学习。
+* 为每种组合学习检测器，显然其数据要求是巨大的，也无法处理unseen combination。
+
+作者提出了归类迁移的思想，既学习细分的entity的表示，也构建整个visual phrase的表示。
+
+![image-20200219215706716](imgs\image-20200219215706716.png)
+
+在训练过程，作者分别抽取subject/object/predicate/visual phrase的视觉和三元组特征，并分别嵌入到四个特征空间中。图像与短语间的整体对应和训练Loss表示如下
+$$
+\begin{aligned}
+S_{t,i}&=\prod_{b\in \left\{s,p,o,vp\right\}}{\frac{1}{1+e^{-{w^b_t}^{\mathrm{T}}v^b_i}}}\\
+\mathcal{L}_b&=\sum^N_{i=1}{\sum_{t\in V_b}{\left[y^i_t=1\right]\log\left(\frac{1}{1+e^{-{w^b_t}^{\mathrm{T}}v^b_i}}\right)}}\\
+\mathcal{L}&=\mathcal{L}_s+\mathcal{L}_o+\mathcal{L}_p+\mathcal{L}_{vp}
+\end{aligned}
+$$
+对于未见过的组合$t'$，作者考虑将已有的三元组表示进行变换得到未见过的三元组表示$w^{vp}_{t'}$，就像word2vec中的经典例子**"king"-"man"+"woman"="queen"**，作者希望达到**"person ride hourse"-"hourse"+"cow"=person ride cow"**这种效果。为此作者设计了如下函数
+$$
+\begin{aligned}
+w^{vp}_{t'}&=w^{vp}_{t}+\Gamma\left(t,t'\right)\\
+\Gamma\left(t,t'\right)&=\mathrm{MLP}\left[
+\begin{smallmatrix}
+      w^{s}_{t'}-w^{s}_{t}\\
+      w^{o}_{t'}-w^{o}_{t}\\
+      w^{p}_{t'}-w^{p}_{t}
+    \end{smallmatrix}\right]
+\end{aligned}
+$$
+为了提高鲁棒性，作者设计相关函数并整合多个三元组迁移的结果
+$$
+\begin{aligned}
+G\left(t,t'\right)&=\sum_{b\in \left\{s,p,o,vp\right\}}{\alpha_b {w^b_t}^{\mathrm{T}}w^b_{t'}}\\
+\bar{w}^{vp}_{t'}&=\sum_{t \in \mathcal{N}_{t'}}{G\left(t,t'\right)\left(w^{vp}_{t}+\Gamma\left(t,t'\right)\right)}
+\end{aligned}
+$$
+
+### DenseCap: Fully Convolutional Localization Networks for Dense Captioning
+
+2016 CVPR
+
+#### Keywords
+
+Localization
+
+#### 解析
+
+本文的任务是从图像中生成Dense Caption（图像中有多个目标，需要给出多条语句描述目标和目标之间的关系），作者主要的贡献是在Localization中将Faster-RCNN中的RoI Pooling替换成bilinear interpolation，使得梯度传播中可以保持空间位置。
+
+![image-20200219194707797](imgs\image-20200219194707797.png)
+
+传统的Faster-RCNN会使用RoI Pooling的方式将Region划分成由大小不一的cells构成的固定大小的grid，通过对cell取max pooling，得到固定大小的feature map。这种方式可以实现梯度的反向传播，但梯度并不是直接返回输入的各个坐标(max pooling反向传播时只会将梯度直接传给响应max的位置)。
+
+作者提出使用bilinear interpolation予以替换。
+
+对于任意尺寸$C\times W\times H$的feature map $U$，需要得到$C\times X\times Y$的输出$V$，在此之前，可以计算出$V$中任意坐标到原始输入$U$的映射，这个映射可以存入Sampling Grid $G\in \mathbb{R}^{X\times Y\times 2}$中其中$G_{i,j}=\left(x_{i,j},y_{i,j}\right)$，表示$V$中 $i,j$ 像素在 $U$ 中的原坐标。随后便可以基于$G$和预设的kernel计算 $V$ 了
+$$
+\begin{aligned}
+V_{c,i,j}&=\sum^W_{i'=1}{\sum^H_{j'=1}{U_{c,i'j'}k\left(i'-x_{i,j}\right)k\left(j'-y_{i,j}\right)}}\\
+k\left(d\right)&=\max\left(0,1-\lvert d\rvert\right)
+\end{aligned}
+$$
+如果有 $B$ 个Region就重复上述操作并将 $B$ 个regions的结果堆叠就得到了最终的feature tensor of shape $B\times C\times X\times Y$。
+
+本文其他地方都比较老套，就不进一步解释了。
+
 ### Auto-Encoding Scene Graphs for Image Captioning
 
 2019 CVPR
