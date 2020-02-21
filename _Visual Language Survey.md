@@ -22,13 +22,107 @@ Visual Language任务指的是同时利用到视觉和文本信息且关注于�
 
 ## 方法
 
+### Unsupervised Image Captioning
+
+2019 CVPR
+
+**Keywords:** 无监督学习、Image Caption
+
+本文是近年第一个讨论无监督训练Image Caption任务的文章。这一任务可以看作数据集中有大量图像和语料，但语料和图像之间没有任何对应关系。
+
+如何从无监督数据中学习到描述指定图像的文本，作者提出了一个大体的思路，其认为这个任务所需要的知识可以分为两个部分
+
+* 如何从图像中获取具有语义的concepts
+* 如何将concepts转化为自然语言
+
+前者作者主要使用从现有的detector中蒸馏知识，同时通过reconstrust image的过程加以辅助，使得模型能抽取出图像中具有丰富语义的中间表示。后者作者设计了一个自学习机制，从语料中抽取concepts并将原句子作为ground truth以进行训练。
+
+#### 模型结构
+
+核心的模型结构和大多数Caption模型无异，首先由一个CNN网络从Image中抽取中间表示，再通过一个基于LSTM的generator生成Caption语句。
+$$
+\begin{aligned}
+f_{im}&=\mathrm{CNN}\left(I\right)\\
+x_{-1}&=\mathrm{FC}\left(f_{im}\right)\\
+x_t&=W_es_t\\
+\left[p_{t+1},h^g_{t+1}\right]&=\mathrm{LSTM}^g\left(x_t,h^g_t\right)\\
+s_t&\sim p_t\quad t\in \{1...n\}
+\end{aligned}
+$$
+LSTM的每一步输入$x_t$为上一轮产生单词的embedding，$W_e$是embedding字典，图像特征通过变换到词的向量空间中作为LSTM的初始输出。其每一轮会输出一个词汇上的概率分布，通过采样的方式选择每一步的输出词$s_t$。
+
+为了能让模型能被优化，作者设计了一个discriminator用来判别句子的真实性。其同样是基于LSTM的结构。
+$$
+\left[q_{t},h^d_{t}\right]=\mathrm{LSTM}^d\left(x_t,h^d_t\right)
+$$
+其接收geneator生成句子的embedding序列，每一步输出当前形成句子的置信度。
+
+![image-20200221191001278](imgs\image-20200221191001278.png)
+
+#### 监督信号构成
+
+本文的监督信号由两类组成，Loss通过梯度下降的方式进行传播，Reward则通过Policy Gradient的方式模拟梯度。
+
+##### 对抗监督
+
+作者设计的discriminator可以和generator构成GAN模型，但值得注意的是，生成器和判别器之间由于有采样的存在，无法传递梯度，因此作者将判别器的结果构造成adversarial reward。
+$$
+r^{adv}_t=\log\left(q_t\right)
+$$
+同时判别器本身是可以通过基于真实语料构造的数据产生loss进行训练的。通过真实语料，可以构造带有标注的真实和虚假语料库，将判别器单独作为分类器进行训练。
+$$
+\mathcal{L}_{adv}=-\left[\frac{1}{l}\sum^l_{t=1}{\log\left(\hat{q}_t\right)}+\frac{1}{n}\sum^n_{t=1}{\log\left(1-q_t\right)}\right]
+$$
+
+##### 视觉概念蒸馏
+
+上述对抗监督只能指导生成器通过image feature生成通顺的句子，但并没有和图像中的语义建立联系。为此作者希望将现有的detector的知识蒸馏到生成器中，具体而言，检测器检测到的concepts可以表示为$\mathcal{C}=\{\left(c_1,v_1\right),...,\left(c_{N_c},v_{N_c}\right)\}$，其中$c$表示concept，$v$表示置信度，如果生成器产生的句子中存在检测器检测到的concept就给予reward。
+$$
+r^c_t=\sum^{N_c}_{i=1}I\left(s_t=c_i\right)v_i
+$$
+
+##### 图像文本重构
+
+检测器只能提供少量精确的语义指导，现有的检测器能够检测的物体数目过少难以让模型理解广泛的语义。为此作者提出让sentences和images的特征表示映射到同一空间中，并反向重构两者。
+
+**图像重构：**考虑到文本本身并不会对图像的细节进行描述，所以作者考虑仅还原图像抽取后的特征向量。
+$$
+\begin{aligned}
+x'&=\mathrm{FC}\left(h^d_n\right)\\
+\mathcal{L}_{im}&=\lVert x_{-1}-x'\rVert^2_2\\
+r^{im}_t&=-\mathcal{L}_{im}
+\end{aligned}
+$$
+其中loss可以用来训练判别器，而reward用来训练生成器。
+
+**文本重构：**如果调换生成器和判别器的位置，可以把它们看作是Encoder-Decoder模型，判别器起到了Encoder的作用输入句子输出的hidden state可以看作sentence feature，而生成器读取image feature生成句子，起到了Decoder的作用，那么只要让这两种feature处于同一特征空间，Encoder-Decoder模型就构建起来了。为此，作者将判别器的输入替换成语料库并要求模型重构句子自身。为了贴近从image feature中解码句子的场景，作者引入了文本去噪自编码器的思路，在输入的句子中引入噪声，要求复原无噪声的句子，把图像特征解码句子看作是文本去噪的过程。
+$$
+\mathcal{L}_{sen}=-\sum^l_{l=1}\log\left(p\left(s_t=\hat{s}_t|\hat{s}_1,...,\hat{s}_{t-1}\right)\right)
+$$
+调换位置得到的Encoder-Decoder模型是梯度连续的，可以直接用loss训练生成器和判别器。
+
+![image-20200221191143233](imgs\image-20200221191143233.png)
+
+#### 梯度整合
+
+最终将Policy Gradient和Loss Gradient结合，生成器的梯度表示为
+$$
+\begin{aligned}
+\nabla_{\theta} \mathcal{L}\left(\theta\right)=&-\mathbb{E}\left[\sum^n_t{\left(\sum^n_{s=t}\gamma^s\left(r^{adv}_s+\lambda_c r^c_s\right)+\lambda_{im} r^{im}_s-b_t\right)}\nabla_{\theta}\log\left(s_t^{\mathrm{T}}p_t\right)\right]\\
+&+\lambda_{sen}\nabla_{\theta}\mathcal{L}_{sen}\left(\theta\right) 
+\end{aligned}
+$$
+判别器的梯度均来自梯度下降，Loss表示为
+$$
+\mathcal{L}_D=\mathcal{L}_{adv}+\lambda_{im}\mathcal{L}_{im}
+$$
+其中$\lambda$均为均衡各模块的超参数，在Policy Gradient中$\gamma$是衰减参数，$b$是baseline  reward估计参数。
+
 ### Visual Concept-Metaconcept Learning
 
 2019 NIPS
 
-#### Keywords
-
-Visual concept recognition
+**Keywords:** Visual concept recognition
 
 在建立视觉和concept的联系中，现有方法往往时孤立地考虑每一个concept于其视觉特征，作者考虑让计算机理解哪一些concept描述的是同一类事物，并将其称为metaconcept。
 
@@ -81,9 +175,7 @@ $$
 
 2019 ICCV
 
-#### Keywords
-
-Visual concept recognition
+**Keywords:** Visual concept recognition
 
 本文基于迁移的思想，让模型能够识别未见过的视觉概念组合。即对于$t=\left(s,p,o\right)$这种基于subject,predicate和object的三元组，如果其中每个元素都得到了充分的学习但$t$未曾参与过训练，希望识别到$t$和视觉表示的对应。
 
@@ -128,11 +220,7 @@ $$
 
 2016 CVPR
 
-#### Keywords
-
-Localization
-
-#### 解析
+**Keywords:** Localization
 
 本文的任务是从图像中生成Dense Caption（图像中有多个目标，需要给出多条语句描述目标和目标之间的关系），作者主要的贡献是在Localization中将Faster-RCNN中的RoI Pooling替换成bilinear interpolation，使得梯度传播中可以保持空间位置。
 
@@ -157,15 +245,11 @@ $$
 
 2019 CVPR
 
-#### Keywords
-
-GCN、跨模态、自编码器
-
-#### 解析
+**Keywords:** GCN、跨模态、自编码器
 
 关于Caption生成任务，一直以来存在一个问题就是语言缺少归纳性，把目标检测的结果拼凑得到文本语义往往比较简单，而人类在描述时会基于一些预先学习的假设(inductive bias)，得到高度概括的语句。因此作者提出一种图卷积+自编码器的方法挖掘更深层次的语义并进行归纳总结，以提升Caption的效果。
 
-##### Encoder-Decoder
+#### Encoder-Decoder
 
  作者的Image2Caption编码过程表示如下
 $$
@@ -187,7 +271,7 @@ $$
 $$
 ![image-20200207165456718](imgs\image-20200207165456718.png)
 
-##### Auto-Encoding Scene Graphs
+#### Auto-Encoding Scene Graphs
 
 首先作者从句子中抽取出若干objects, attributes and relationships记为$o_i,a_{i,l},r_{ij}$，并将它们作为Graph中的node，并根据以下规则建立有向边。
 
@@ -215,7 +299,7 @@ $$
 
 Auto-Encoding Scene Graphs(SGAE)的训练过程是无监督的，并且可以无限迭代。
 
-##### Multi-modal Graph Convolution Network
+#### Multi-modal Graph Convolution Network
 
 Image2Caption部分的视觉特征$\mathcal{V}$同样可以生成Graph，作者将文本模态(label embdding $e_{o_i}$)和视觉模特(visual embedding $v_{o_i}$)生成Graph的节点编码进行融合
 
@@ -227,11 +311,7 @@ $u_{o_i}=\mathrm{ReLU}\left(W_1 e_{o_i}+W_2 v_{o_i}\right)-\left(W_1 e_{o_i}+W_2
 
 2018 CVPR
 
-#### Keywords
-
-Attention、Visual Grounding、Object Recognize
-
-#### 解析
+**Keywords:** Attention、Visual Grounding、Object Recognize
 
 本文针对的任务是Visual Grounding任务，给出一张图片和一些有关文本，需要找出其匹配的图像区域。
 
@@ -246,7 +326,7 @@ Attention、Visual Grounding、Object Recognize
 
 注：自然语言输入有两种，一种是问答序列，另一种是一个句子，在图片中，$d_1,...d_L$并不是说模型需要同时接收这两者，而是当输入为问答序列时，每次读取一个问答对并走橙色路线，反之每次读取一个单词，走蓝色路线。
 
-##### Image-level attention
+#### Image-level attention
 
 原图像首先通过CNN抽取得到视觉特征$V \in \mathbb{R}^{K,d}$，$K$表示抽取后的像素数目。在每个时间步，视觉特征和LSTM的隐藏状态通过计算attention进行融合求得attended visual feature $z_t$。随后输入的文本特征$m_t$和视觉特征$z_t$会更新隐藏状态$h_{t-1}$得到$h_t$。
 $$
@@ -259,7 +339,7 @@ h_t&=\mathrm{LSTM}\left(m_t,z_t,h_{t-1}\right)\\
 $$
 随着LSTM不断读取文字，attended视觉表示$z_t$会更加关注于文本涉及的内容，最后得到的$h_{t=L}$会作为image-level attention的输出。
 
-##### Propose-level attention
+#### Propose-level attention
 
 对于候选区域的特征生成，作者考虑了三个部分：视觉特征$u$、空间特征$s$、标签特征$c$，每个区域的特征标记为$p_i=\left[u_i,s_i,c_i\right]$。
 
@@ -277,7 +357,7 @@ $$
 \tilde{p}_i=\beta_{Li}p_i
 $$
 
-##### Referring
+#### Referring
 
 作者通过让每个候选region的最终表示$\tilde{p}_i$和image-level attention的表示进行点积，并通过softmax得到区域选中的概率分布。使用交叉熵损失训练。
 $$
@@ -289,11 +369,7 @@ $$
 
 2018 CVPR
 
-#### Keywords
-
-VQA、Image Caption、Top-Down Attention
-
-#### 解析
+**Keywords:** VQA、Image Caption、Top-Down Attention
 
 这篇文章透露出浓浓的竞赛风格，很多细节为什么要这么做的解释比较含糊，一些概念和叫法也略显强行（比如Bottom-Up Attention），不过这也正常，很多东西就是解释不了的，效果好学就行了。
 
@@ -302,11 +378,11 @@ VQA、Image Caption、Top-Down Attention
 * Bottom-Up Attention：相比于直接用CNN抽取特征，作者改用Faster-RCNN从图片中取出图像区域并抽取特征。这可以看作是一种Hard Attention，充分训练的网络可以直接筛选出可能有用的图像区域。因为是从像素生成Region，所以是Bottom-Up。
 * Top-Down Attention：作者考虑了Caption任务和VQA任务的Top-Down Attention，其思想便是用整体的文本表示指导个Regions的关注度，所以是Top-Down。
 
-##### Bottom-Up Attention
+#### Bottom-Up Attention
 
 Faster RCNN就不过多介绍了，作者在ImageNet预训练模型上进一步用Visual Genome上训练，这个数据集还保留了物体的attribute特征，所以作者额外引入了属性分类任务进行训练。
 
-##### Top-Down Attention
+#### Top-Down Attention
 
 作者考虑了Caption任务和VQA任务。
 
@@ -369,11 +445,7 @@ $$
 
 2019 ICCV
 
-#### Keywords
-
-Text-Image Matching、视觉推理、弱监督
-
-#### 解析
+**Keywords:** Text-Image Matching、视觉推理、弱监督
 
 本文应用的任务也是图像和文本的匹配任务，作者考虑到视觉图像中除了Object和Sense外，它们之间的interaction, relative positions等high-level的语义没有没很好地考虑到，所以作者提出了一个视觉表示学习模型，其能够捕获到Objects和它们的语义关系。
 
@@ -381,13 +453,13 @@ Text-Image Matching、视觉推理、弱监督
 
 ![image-20200208174610546](imgs\image-20200208174610546.png)
 
-##### Image Representation by Bottom-Up Attention
+#### Image Representation by Bottom-Up Attention
 
 作者首先通过Bottom-Up Attention方法从图像$I$中获取region representations $V=\left\{v_1,...,v_k\right\}$。
 
 Bottom-Up Attention是2018 CVPR的Oral，本文也会对其进行讲解。
 
-##### Region Relationship Reasoning
+#### Region Relationship Reasoning
 
 作者为每一张图片的regions建了一张完全图，其通过计算regions之间的affinity matrix得到region之间的关系
 $$
@@ -405,7 +477,7 @@ V^*=W_r\left(RVW_g\right)+V
 $$
 $W_g$是GCN权重，$W_r$是残差权重。作者这样做的好处是节点之间的连接关系没有固定，是可学习的。得到的$V^*=\left\{v^*_1,...,v^*_k\right\}$即relationship-enhanced表示。
 
-##### Global Semantic Reasoning
+#### Global Semantic Reasoning
 
 作者通过一个RNN对特征序列进行fuse。由于每个region的特征都被其所关联的region增强，所以每个时间步输入进RNN的本质上是当前region及其相关region的融合。作者通过上一步的记忆和当前的图像特征生成update memory
 $$
@@ -423,7 +495,7 @@ m_i&=\left(1-z_i\right)\circ m_{i-1}+z_i\circ \tilde{m}_i
 $$
 最终的$m_K$作为图像$I$最终的视觉表示。
 
-#####  Learning Alignments by Joint Matching and Generation
+####  Learning Alignments by Joint Matching and Generation
 
 最后作者提出了两个Loss任务共同训练。
 
@@ -445,15 +517,11 @@ $$
 
 2019 CVPR
 
-#### Keywords
-
-Layer Attention、跨模态
-
-#### 解析
+**Keywords:** Layer Attention、跨模态
 
 这篇文章提出了一个新视角，将文本对视觉的注意力应用在视觉特征抽取的过程中，而非仅对抽取结果进行Attention。
 
-##### Multi-Level Multimodal Attention Mechanism
+#### Multi-Level Multimodal Attention Mechanism
 
 ![image-20200206171423397](imgs\image-20200206171423397.png)
 
@@ -476,7 +544,7 @@ $$
 
 公式中的$a_{t,l}$表示了词$t$在图像特征中第$l$层的attended表示，作者还认为上述融合过程相当于从visual representation中用attention筛选出subset并构成了一个超平面，而$a_{t,l}$是其中一条向量。
 
-##### Feature Level Selection
+#### Feature Level Selection
 
 作者认为，word与图像的匹配性表现在与各layer的匹配性上，需要选择一个最匹配的feature level。
 $$
@@ -506,7 +574,7 @@ R_{s}(S, I)&=\max _{l} R_{s, l}
 $$
 $R_{s, l}\left(S,I\right)$表示的是sentence-based相似度，其相当于把word-based的过程用整个句子的表示替换，所以直接用$\max_l R_{s,l}$就可以了。
 
-##### Training
+#### Training
 
 作者提出了一个很有意思的训练方式，对于每一个batch的image-caption pairs，对于image相当于要在batch中找到最佳的caption，反之同理，这就变成了一个分类任务。
 $$
@@ -524,17 +592,13 @@ $$
 
 2018 CVPR
 
-#### Keywords
-
-Attention、跨模态表示学习
-
-#### 解析
+**Keywords:** Attention、跨模态表示学习
 
 作者基于自然语言处理中的Transformer模型，提出了一种跨模态的Co-Attention模型，以图片和其描述为例，抽取出Regions和Phrases序列，可以分别生成每个Phrase对所有Regions的attended feature和Region对所有Phrases的attended feature。
 
 为了表述方便，这里用$Q_l$指代words feature序列并用$V_l$指代pixel feature(经过卷积抽取过的)序列，作者堆叠了Co-attention并用$l$表示层数。
 
-##### Co-attention
+#### Co-attention
 
 $Q_l \in \mathbb{R}^{d\times N}\quad V_l \in \mathbb{R}^{d\times T}$，其中$N,T$分别表示单词数和像素点数，$d$表示channel数。由于其中存在拼接、相加的操作，所以必须使得两者具有同样的channel数。
 
@@ -594,21 +658,17 @@ $$
 
 2019 CVPR
 
-#### Keywords
-
-多任务、Vision-Language表示学习
-
-#### 解析
+**Keywords:** 多任务、Vision-Language表示学习
 
 这篇文章是**Improved Fusion of Visual and Language Representations by Dense Symmetric Co-Attention for Visual Question Answering**作者的后续工作，其使用堆叠的Dense Co-Attention（上文提出的方法），对跨模态特征进行抽取和融合，同时作者设计了多任务结构，从堆叠而成的pipeline中延伸出分支，指向不同的任务，通过多任务指导特征表示学习。
 
 ![image-20200208202708938](imgs\image-20200208202708938.png)
 
-##### Shared Encoder
+#### Shared Encoder
 
 作者使用了Dense Co-attention layer作为跨模态编码层，通过堆叠这些层以获得层次化的特征。每一层的输出可以表示为$\left(S_l,I_l\right)$中，$S_l\in \mathbb{R}^{d\times N},I_l\in \mathbb{R}^{d\times T}$，其中，$S_l,N$表示Sentence feature和词的数目，$I_l,T$表示Visual feature序列和regions的数目。
 
-##### Task-specific Decoders
+#### Task-specific Decoders
 
 作者设计了一个Task-specific解码器，每个任务独享一个解码器，将$\left(S_l,I_l\right)$解码得到任务所需要的输出$O$，$l$是任务从编码器分支出来的层号。这里作者介绍了三个任务的做法：
 
@@ -642,7 +702,7 @@ $$
 \mathrm{score}\left(I_t,p_h\right)=\sigma\left({p_h}^{\mathrm{T}}W I_t\right)
 $$
 
-##### Task-specific Hyperparameter Search and Schedule
+#### Task-specific Hyperparameter Search and Schedule
 
 对于每个任务，其分支层数$l$及其他任务相关参数的选择，作者首先在训练独立任务时执行了grid search，确定超参数后再联合训练。
 
@@ -655,11 +715,7 @@ $$
 
 2019 ICCV
 
-#### Keywords
-
-Visual grounding、Image Level监督
-
-#### 解析
+**Keywords:** Visual grounding、Image Level监督
 
 本文研究的是Visual grounding任务，使用Image level的监督数据，实现Image regions和Caption phrases之间的对齐。其提出早期方法直接用局部对齐的置信度来生产全局对齐的置信度，模型只需要学习判别一些关键区域的对齐就足以实现Image和Caption的对齐，这使得RoIs和短语的对齐训练不充分。作者考虑将模型认为对齐的部分抽取出来，仅使用对齐部分的feature作为输入，让Image Caption的对齐判断仅依赖于对齐的输入，这就要求网络需要先获取比较精细的对齐结果，这更加充分地利用了Image-Level的监督信号。
 
@@ -673,7 +729,7 @@ Visual grounding、Image Level监督
 
 ![image-20200205214846947](imgs\image-20200205214846947.png)
 
-##### The Local Matching Module
+#### The Local Matching Module
 
 作者需要挖掘出潜在的RoI-phrase对应关系，所以对于每一个RoI $x_j$，其首先被投影到文本的特征空间，并用余弦相似度判断相关性。
 $$
@@ -688,11 +744,11 @@ $$
 $$
 用它作为captionc 中的phase k所对齐的RoI j的表示。当然如果仅仅需要获取对齐关系，那么只需要依据传统方法求max即可。
 
-##### The Local Aggregator Module
+#### The Local Aggregator Module
 
 对于图像I，其基于caption c的RoIs可以表示为$I^c_{rois}=\left(x^c_k\right)^P_{k=1}$，需要基于它获取caption-conditioned的image representation，作者直接用MLP+mean pooling的方式编码$I^c_{rois}$，写作$f_{enc}\left(I^c_{rois}\right)$。
 
-##### The Global Matching Module
+#### The Global Matching Module
 
 最终作者直接用RNN编码的caption representation和caption-conditioned的image representation进行余弦相似度比较得到相似度，训练时使用Rank Loss。
 
@@ -700,11 +756,7 @@ $$
 
 2019 ICCV
 
-#### Keywords
-
-跨模态、Text-Image检索、鲁棒性
-
-#### 解析
+**Keywords**: 跨模态、Text-Image检索、鲁棒性
 
 这篇文章吹牛和抄的内容比较多，就捡一些有贡献的地方写吧。
 
@@ -712,13 +764,13 @@ $$
 
 为了保持行文完整性，还是写一下整个论文的步骤。
 
-##### Cross-modal Message Aggregation
+#### Cross-modal Message Aggregation
 
 作者说这个部分是**we propose**的，然而这里的方法完全抄袭2018 CVPR Improved Fusion of Visual and Language Representations by Dense Symmetric Co-Attention for Visual Question Answering（笔记也在本页面），也没有在正文中出现对它的引用！
 
 它会基于Co-Attention，为Text中每个词生成来自Visual的Attended表示，同理每个Region生成来自Text的表示，记为$\tilde{T},\tilde{V}$。
 
-##### Cross-modal Gated Fusion
+#### Cross-modal Gated Fusion
 
 作者希望对于不匹配的Text和Image，不要将Attended representation（来自另一模态的特征）传递过去。
 
@@ -733,7 +785,7 @@ $$
 
 ...
 
-##### Loss
+#### Loss
 
 作者提出了一个有趣的Loss，基于Rank loss做了改进
 
